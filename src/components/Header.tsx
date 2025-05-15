@@ -11,7 +11,7 @@ export const Header: React.FC<HeaderProps> = () => {
     <header className="bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 sticky top-0 z-10 h-16">
       <div className="h-full px-4 md:px-6 flex items-center justify-between">
         <div className="flex-1 flex items-center">
-          <h1 className="text-xl font-bold text-blue-600">Historical Data</h1>
+          <h1 className="text-xl font-bold text-primary-700">Historical Data</h1>
         </div>
 
         {/* <div className="hidden md:flex items-center space-x-6">

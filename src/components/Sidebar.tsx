@@ -39,10 +39,10 @@ export const Sidebar: React.FC = () => {
     return `${days}d ${hours}h ${minutes}m`;
   };
   return (
-    <aside className="w-20 md:w-56 bg-blue-600 flex flex-col items-center py-6 px-2 md:px-4">
+    <aside className="w-20 md:w-56 bg-primary-700 flex flex-col items-center py-6 px-2 md:px-4">
       <div className="mb-10 flex items-center gap-2">
         <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center">
-          <Activity className="h-5 w-5 text-blue-600" />
+          <Activity className="h-5 w-5 text-primary-700" />
         </div>
         <span className="hidden md:inline text-xl font-bold text-white">Shardeum</span>
       </div>
@@ -59,7 +59,7 @@ export const Sidebar: React.FC = () => {
             </a>
           </li> */}
           <li>
-            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-blue-600 bg-white font-semibold">
+            <a href="#" className="flex items-center gap-3 px-3 py-2 rounded-lg text-primary-700 bg-white font-semibold">
               <BarChart2 className="h-5 w-5" /> 
               <span className="hidden md:inline">Dashboard</span>
             </a>
@@ -76,7 +76,7 @@ export const Sidebar: React.FC = () => {
       <div className="mt-auto pt-6">
         <div className="flex flex-col items-center">
           <div className="w-12 h-12 rounded-full overflow-hidden mb-2 bg-white flex items-center justify-center">
-            <Layers className="h-6 w-6 text-blue-600" />
+            <Layers className="h-6 w-6 text-primary-700" />
           </div>
           <div className="text-center">
             <div className="text-sm font-medium text-white">Network Status</div>
@@ -93,7 +93,7 @@ export const Sidebar: React.FC = () => {
               {!loading && !error && networkHealth && (
                 <>
                   <span>Uptime: {formatUptime(networkHealth.uptime)}</span>
-                  {/* <span className="text-xs text-blue-500 mt-1">
+                  {/* <span className="text-xs text-primary-600 mt-1">
                     {networkHealth.isServiceValidatorMode ? 'Validator' : 'Node'}
                   </span> */}
                 </>

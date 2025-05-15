@@ -18,6 +18,10 @@ export interface BackfillProgress {
   percentage: number;
   blocksProcessed: number;
   blocksRemaining: number;
+  latestBlockOnChain?: number;
+  currentForwardHead?: number;
+  catchUpPercentage?: number;
+  blocksBehind?: number;
 }
 
 export interface BlockchainData {

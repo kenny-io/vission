@@ -8,10 +8,7 @@ import * as api from '../services/api';
 import { TopAccountsTable } from './TopAccountsTable';
 import { UniqueAddressesTrendChart } from './UniqueAddressesTrendChart';
 
-// API response types
-interface UniqueAccountsResponse {
-  uniqueAccountCount: number;
-}
+// Dashboard component types
 
 interface DashboardProps {
   timeRange: TimeRange;
@@ -31,54 +28,107 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Group API requests by priority to enable progressive loading
+  const fetchCriticalData = async () => {
+    try {
+      // Fetch critical data in parallel (core metrics and status)
+      const [txCountResp, valueResp, gasResp, typesResp, blocksResp, statusResp] = await Promise.allSettled([
+        api.fetchTransactionCount(timeRange),
+        api.fetchTransactionValue(timeRange),
+        api.fetchGasUsage(timeRange),
+        api.fetchTransactionTypes(timeRange),
+        api.fetchBlockMetrics(timeRange),
+        api.fetchIndexerStatus()
+      ]);
+
+      return {
+        txCount: txCountResp.status === 'fulfilled' ? txCountResp.value : { count: 0 },
+        value: valueResp.status === 'fulfilled' ? valueResp.value : { totalValue: '0' },
+        gas: gasResp.status === 'fulfilled' ? gasResp.value : { totalGasUsed: 0 },
+        types: typesResp.status === 'fulfilled' ? typesResp.value : { distribution: { transfer: 0, stake: 0, unstake: 0 } },
+        blocks: blocksResp.status === 'fulfilled' ? blocksResp.value : { totalBlocks: 0, averageTransactionsPerBlock: 0, averageBlockTime: 0 },
+        status: statusResp.status === 'fulfilled' ? statusResp.value : { backfill: { percentageComplete: 0, blocksProcessed: 0, blocksRemaining: 0 } }
+      };
+    } catch (error) {
+      console.error('Error fetching critical data:', error);
+      return null;
+    }
+  };
+
+  // Fetch secondary data that's not needed for initial render
+  const fetchSecondaryData = async () => {
+    try {
+      // Fetch secondary data in parallel
+      const [uniqueAccountsResp, topAccountsResp, addressesTrendResp] = await Promise.allSettled([
+        api.fetchUniqueAccounts(timeRange),
+        api.fetchTopAccounts(timeRange, 10),
+        api.fetchUniqueAddressesTrend(timeRange)
+      ]);
+
+      return {
+        uniqueAccounts: uniqueAccountsResp.status === 'fulfilled' ? uniqueAccountsResp.value : { uniqueAccountCount: 0 },
+        topAccounts: topAccountsResp.status === 'fulfilled' ? topAccountsResp.value : { topAccounts: [] },
+        addressesTrend: addressesTrendResp.status === 'fulfilled' ? addressesTrendResp.value : null
+      };
+    } catch (error) {
+      console.error('Error fetching secondary data:', error);
+      return {
+        uniqueAccounts: { uniqueAccountCount: 0 },
+        topAccounts: { topAccounts: [] },
+        addressesTrend: null
+      };
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     setError(null);
+    
     try {
       console.log(`Fetching data for time range: ${timeRange}`);
-      // Fetch data from multiple endpoints with independent error handling
-      let txCount: any, value: any, gas: any, types: any, blocks: any, status: any;
-      let uniqueAccounts: UniqueAccountsResponse = { uniqueAccountCount: 0 };
-      let topAccountsResp: any, addressesTrend: any;
       
-      try { txCount = await api.fetchTransactionCount(timeRange); } catch (e) { console.error('Failed to fetch transaction count:', e); txCount = { count: 0 }; }
-      try { value = await api.fetchTransactionValue(timeRange); } catch (e) { console.error('Failed to fetch transaction value:', e); value = { totalValue: '0' }; }
-      try { gas = await api.fetchGasUsage(timeRange); } catch (e) { console.error('Failed to fetch gas usage:', e); gas = { totalGasUsed: 0 }; }
-      try { types = await api.fetchTransactionTypes(timeRange); } catch (e) { console.error('Failed to fetch transaction types:', e); types = { distribution: { transfer: 0, stake: 0, unstake: 0 } }; }
-      try { blocks = await api.fetchBlockMetrics(timeRange); } catch (e) { console.error('Failed to fetch block metrics:', e); blocks = { totalBlocks: 0, averageTransactionsPerBlock: 0, averageBlockTime: 0 }; }
-      try { status = await api.fetchIndexerStatus(); } catch (e) { console.error('Failed to fetch indexer status:', e); status = { backfill: { percentageComplete: 0, blocksProcessed: 0, blocksRemaining: 0 } }; }
-      try { 
-        uniqueAccounts = await api.fetchUniqueAccounts(timeRange); 
-      } catch (e) { 
-        console.error('Failed to fetch unique accounts:', e); 
-        uniqueAccounts = { uniqueAccountCount: 0 }; 
+      // First fetch critical data needed for initial render
+      const criticalData = await fetchCriticalData();
+      
+      if (!criticalData) {
+        throw new Error('Failed to fetch critical dashboard data');
       }
-      try { topAccountsResp = await api.fetchTopAccounts(timeRange, 10); } catch (e) { console.error('Failed to fetch top accounts:', e); topAccountsResp = { topAccounts: [] }; }
-      try { addressesTrend = await api.fetchUniqueAddressesTrend(timeRange); } catch (e) { console.error('Failed to fetch unique addresses trend:', e); addressesTrend = null; }
-
-      //  calculate total transactions
+      
+      const { txCount, value, gas, types, blocks, status } = criticalData;
+      
+      // Process critical data and update UI immediately
       let totalTransactions = 0;
       if (types && types.distribution) {
         totalTransactions = Object.values(types.distribution as Record<string, number>).reduce((a, b) => a + b, 0);
       }
-
-      //  set block metrics
-      if (blocks && blocks.averageTransactionsPerBlock !== undefined) {
-        setBlockMetrics({
-          averageTransactionsPerBlock: blocks.averageTransactionsPerBlock,
-          averageBlockTime: blocks.averageBlockTime,
-        });
-      } else {
-        setBlockMetrics(null);
-      }
-
-      // Set top accounts
-      setTopAccounts(topAccountsResp?.topAccounts || []);
       
-      // Set unique addresses trend
-      setUniqueAddressesTrend(addressesTrend);
-
-      //  create transaction distribution data
+      // Create backfill and catch-up progress data
+      let backfillProgress = null;
+      if (status) {
+        const latestBlockOnChain = status.latestBlockOnChain || 0;
+        const currentForwardHead = status.currentForwardHead || 0;
+        const backfillPercentage = status.backfill?.percentageComplete || 0;
+        
+        let catchUpPercentage = 100;
+        let blocksBehind = 0;
+        
+        if (latestBlockOnChain > currentForwardHead) {
+          blocksBehind = latestBlockOnChain - currentForwardHead;
+          catchUpPercentage = Math.max(0, Math.min(100, ((currentForwardHead / latestBlockOnChain) * 100)));
+        }
+        
+        backfillProgress = {
+          percentage: backfillPercentage,
+          blocksProcessed: status.backfill?.blocksProcessed || 0,
+          blocksRemaining: status.backfill?.blocksRemaining || 0,
+          latestBlockOnChain,
+          currentForwardHead,
+          catchUpPercentage,
+          blocksBehind
+        };
+      }
+      
+      // Create transaction distribution data
       const transactionDistribution = {
         transfer: {
           count: types?.distribution?.transfer || 0,
@@ -94,19 +144,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
         }
       };
       
-      // create backfill progress data
-      const backfillProgress = status?.backfill ? {
-        percentage: status.backfill.percentageComplete || 0,
-        blocksProcessed: status.backfill.blocksProcessed || 0,
-        blocksRemaining: status.backfill.blocksRemaining || 0
-      } : null;
-      
-      // Set the data
+      // Set initial data with critical metrics
       setData({
         metrics: {
           transactions: txCount?.count || 0,
           valueTransacted: parseFloat(value?.totalValue || '0') / 1e18, // Convert from Wei to SHM
-          uniqueAccounts: uniqueAccounts?.uniqueAccountCount || 0,
+          uniqueAccounts: 0, // Will be updated with secondary data
           blocksProduced: blocks?.totalBlocks || 0,
           gasSpent: gas?.totalGasUsed || 0
         },
@@ -114,6 +157,42 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
         backfillProgress
       });
       
+      // Set block metrics
+      if (blocks && blocks.averageTransactionsPerBlock !== undefined) {
+        setBlockMetrics({
+          averageTransactionsPerBlock: blocks.averageTransactionsPerBlock,
+          averageBlockTime: blocks.averageBlockTime
+        });
+      }
+      
+      // Show content with critical data
+      setLoading(false);
+      
+      // Fetch secondary data in the background
+      const secondaryData = await fetchSecondaryData();
+      const { uniqueAccounts, topAccounts: topAccountsData, addressesTrend } = secondaryData;
+      
+      // Update with secondary data
+      if (data) {
+        // Update unique accounts count
+        setData(prevData => {
+          if (!prevData) return null;
+          return {
+            ...prevData,
+            metrics: {
+              ...prevData.metrics,
+              uniqueAccounts: uniqueAccounts?.uniqueAccountCount || 0
+            }
+          };
+        });
+      }
+      
+      // Set top accounts
+      setTopAccounts(topAccountsData?.topAccounts || []);
+      
+      // Set unique addresses trend
+      setUniqueAddressesTrend(addressesTrend);
+
       // Check if we have any data
       const hasAnyData = txCount?.count > 0 || parseFloat(value?.totalValue || '0') > 0 || gas?.totalGasUsed > 0 || uniqueAccounts?.uniqueAccountCount > 0;
       if (!hasAnyData) {
@@ -155,24 +234,50 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
         </div>
       )}
       
-      {/* Backfill Progress Info Component - only show when not 100% complete */}
-      {!loading && data?.backfillProgress && data.backfillProgress.percentage !== 100 && (
-        <div className="flex items-center mb-6 p-4 bg-orange-50 border border-orange-200 rounded-lg text-orange-800">
-          <Info className="h-5 w-5 mr-3 text-orange-400 flex-shrink-0" />
-          <div className="flex flex-col w-full">
-            <span className="font-semibold">Backfill Progress</span>
-            <div className="w-full mt-1 mb-1 h-2 bg-orange-100 rounded-full overflow-hidden">
-              <div
-                className="h-2 bg-orange-400 rounded-full transition-all duration-500"
-                style={{ width: `${data.backfillProgress.percentage}%` }}
-              ></div>
+      {/* Progress Info Component - show when either backfill or catch-up is not 100% complete */}
+      {!loading && data?.backfillProgress && (data.backfillProgress.percentage !== 100 || (data.backfillProgress.catchUpPercentage !== undefined && data.backfillProgress.catchUpPercentage < 100)) && (
+        <div className="flex flex-col mb-6 p-4 bg-orange-50 border border-orange-200 rounded-lg text-orange-800">
+          {/* Backfill Progress - only show when not 100% complete */}
+          {data.backfillProgress.percentage !== 100 && (
+            <div className="flex items-center mb-3">
+              <Info className="h-5 w-5 mr-3 text-orange-400 flex-shrink-0" />
+              <div className="flex flex-col w-full">
+                <span className="font-semibold">Backfill Progress</span>
+                <div className="w-full mt-1 mb-1 h-2 bg-orange-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-2 bg-orange-400 rounded-full transition-all duration-500"
+                    style={{ width: `${data.backfillProgress.percentage}%` }}
+                  ></div>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span>{(data.backfillProgress.blocksProcessed ?? 0).toLocaleString()} blocks processed</span>
+                  <span>{(data.backfillProgress.blocksRemaining ?? 0).toLocaleString()} remaining</span>
+                  <span>{(data.backfillProgress.percentage ?? 0).toFixed(2)}% complete</span>
+                </div>
+              </div>
             </div>
-            <div className="flex justify-between text-xs">
-              <span>{(data.backfillProgress.blocksProcessed ?? 0).toLocaleString()} blocks processed</span>
-              <span>{(data.backfillProgress.blocksRemaining ?? 0).toLocaleString()} remaining</span>
-              <span>{(data.backfillProgress.percentage ?? 0).toFixed(2)}% complete</span>
+          )}
+          
+          {/* Catch-up Progress - only show when not 100% caught up */}
+          {data.backfillProgress.catchUpPercentage !== undefined && data.backfillProgress.catchUpPercentage < 100 && (
+            <div className="flex items-center">
+              <Info className="h-5 w-5 mr-3 text-blue-400 flex-shrink-0" />
+              <div className="flex flex-col w-full">
+                <span className="font-semibold">Chain Sync Progress</span>
+                <div className="w-full mt-1 mb-1 h-2 bg-blue-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-2 bg-primary-700 rounded-full transition-all duration-500"
+                    style={{ width: `${data.backfillProgress.catchUpPercentage}%` }}
+                  ></div>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span>Current head: {(data.backfillProgress.currentForwardHead ?? 0).toLocaleString()}</span>
+                  <span>{(data.backfillProgress.blocksBehind ?? 0).toLocaleString()} blocks behind</span>
+                  <span>{(data.backfillProgress.catchUpPercentage ?? 0).toFixed(2)}% synced</span>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
       
