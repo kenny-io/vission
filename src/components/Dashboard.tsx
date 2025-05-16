@@ -32,13 +32,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
   const fetchCriticalData = async () => {
     try {
       // Fetch critical data in parallel (core metrics and status)
-      const [txCountResp, valueResp, gasResp, typesResp, blocksResp, statusResp] = await Promise.allSettled([
+      const [txCountResp, valueResp, gasResp, typesResp, blocksResp, statusResp, uniqueAccountsResp] = await Promise.allSettled([
         api.fetchTransactionCount(timeRange),
         api.fetchTransactionValue(timeRange),
         api.fetchGasUsage(timeRange),
         api.fetchTransactionTypes(timeRange),
         api.fetchBlockMetrics(timeRange),
-        api.fetchIndexerStatus()
+        api.fetchIndexerStatus(),
+        api.fetchUniqueAccounts(timeRange)
       ]);
 
       return {
@@ -47,7 +48,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
         gas: gasResp.status === 'fulfilled' ? gasResp.value : { totalGasUsed: 0 },
         types: typesResp.status === 'fulfilled' ? typesResp.value : { distribution: { transfer: 0, stake: 0, unstake: 0 } },
         blocks: blocksResp.status === 'fulfilled' ? blocksResp.value : { totalBlocks: 0, averageTransactionsPerBlock: 0, averageBlockTime: 0 },
-        status: statusResp.status === 'fulfilled' ? statusResp.value : { backfill: { percentageComplete: 0, blocksProcessed: 0, blocksRemaining: 0 } }
+        status: statusResp.status === 'fulfilled' ? statusResp.value : { backfill: { percentageComplete: 0, blocksProcessed: 0, blocksRemaining: 0 } },
+        uniqueAccounts: uniqueAccountsResp.status === 'fulfilled' ? uniqueAccountsResp.value : { uniqueAccountCount: 0 }
       };
     } catch (error) {
       console.error('Error fetching critical data:', error);
@@ -59,21 +61,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
   const fetchSecondaryData = async () => {
     try {
       // Fetch secondary data in parallel
-      const [uniqueAccountsResp, topAccountsResp, addressesTrendResp] = await Promise.allSettled([
-        api.fetchUniqueAccounts(timeRange),
+      const [topAccountsResp, addressesTrendResp] = await Promise.allSettled([
         api.fetchTopAccounts(timeRange, 10),
         api.fetchUniqueAddressesTrend(timeRange)
       ]);
 
       return {
-        uniqueAccounts: uniqueAccountsResp.status === 'fulfilled' ? uniqueAccountsResp.value : { uniqueAccountCount: 0 },
         topAccounts: topAccountsResp.status === 'fulfilled' ? topAccountsResp.value : { topAccounts: [] },
         addressesTrend: addressesTrendResp.status === 'fulfilled' ? addressesTrendResp.value : null
       };
     } catch (error) {
       console.error('Error fetching secondary data:', error);
       return {
-        uniqueAccounts: { uniqueAccountCount: 0 },
         topAccounts: { topAccounts: [] },
         addressesTrend: null
       };
@@ -94,7 +93,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
         throw new Error('Failed to fetch critical dashboard data');
       }
       
-      const { txCount, value, gas, types, blocks, status } = criticalData;
+      const { txCount, value, gas, types, blocks, status, uniqueAccounts } = criticalData;
       
       // Process critical data and update UI immediately
       let totalTransactions = 0;
@@ -149,7 +148,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
         metrics: {
           transactions: txCount?.count || 0,
           valueTransacted: parseFloat(value?.totalValue || '0') / 1e18, // Convert from Wei to SHM
-          uniqueAccounts: 0, // Will be updated with secondary data
+          uniqueAccounts: uniqueAccounts?.uniqueAccountCount || 0,
           blocksProduced: blocks?.totalBlocks || 0,
           gasSpent: gas?.totalGasUsed || 0
         },
@@ -170,22 +169,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ timeRange, setTimeRange })
       
       // Fetch secondary data in the background
       const secondaryData = await fetchSecondaryData();
-      const { uniqueAccounts, topAccounts: topAccountsData, addressesTrend } = secondaryData;
-      
-      // Update with secondary data
-      if (data) {
-        // Update unique accounts count
-        setData(prevData => {
-          if (!prevData) return null;
-          return {
-            ...prevData,
-            metrics: {
-              ...prevData.metrics,
-              uniqueAccounts: uniqueAccounts?.uniqueAccountCount || 0
-            }
-          };
-        });
-      }
+      const { topAccounts: topAccountsData, addressesTrend } = secondaryData;
       
       // Set top accounts
       setTopAccounts(topAccountsData?.topAccounts || []);
